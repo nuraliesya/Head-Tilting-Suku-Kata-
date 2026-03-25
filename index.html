@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Permainan Pintar Prasekolah 🧠</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; font-family: 'Arial Rounded MT Bold', sans-serif; background: #000; overflow: hidden; color: white; text-align: center; }
+        #video-bg { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; transform: scaleX(-1); }
+        video { width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+        #start-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 200; display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; }
+        #game-overlay { position: relative; z-index: 10; display: none; flex-direction: column; height: 100vh; justify-content: space-around; align-items: center; }
+        .word-tag { font-size: 6rem; background: #1e40af; padding: 10px 60px; border-radius: 60px; border: 6px solid #fff; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+        .choices { display: flex; justify-content: space-between; width: 90%; max-width: 1100px; }
+        .card { width: 350px; height: 350px; background: white; border: 20px solid #ccc; border-radius: 50px; display: flex; align-items: center; justify-content: center; font-size: 180px; transition: 0.3s; color: black; }
+        
+        /* Maklum Balas Warna */
+        .active-left #left-card.correct-glow, .active-right #right-card.correct-glow { border-color: #4ade80; background-color: #dcfce7; transform: scale(1.1); }
+        .active-left #left-card.wrong-glow, .active-right #right-card.wrong-glow { border-color: #ef4444; background-color: #fee2e2; transform: scale(0.95); }
+
+        #success-page { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #22c55e; z-index: 300; display: none; flex-direction: column; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body onclick="startGame()">
+
+<div id="video-bg"><video id="webcam" autoplay playsinline></video></div>
+
+<div id="start-screen">
+    <h1 style="font-size: 4rem;">TEKAN UNTUK MULA</h1>
+    <p style="font-size: 1.5rem;">Dengar sebutan dan condongkan kepala!</p>
+</div>
+
+<div id="game-overlay">
+    <div class="word-tag" id="current-word">SEDIA...</div>
+    <div class="choices">
+        <div id="left-card" class="card"></div>
+        <div id="right-card" class="card"></div>
+    </div>
+    <div style="height: 50px;"></div>
+</div>
+
+<div id="success-page">
+    <h1 style="font-size: 5rem;">🌟 TAHNIAH! 🌟</h1>
+    <p style="font-size: 2rem;">Anda sangat hebat!</p>
+    <button onclick="location.reload()" style="padding: 20px 40px; font-size: 2rem; border-radius: 20px; cursor: pointer; border: none; background: white; color: #166534; font-weight: bold; margin-top: 20px;">Main Lagi</button>
+</div>
+
+<audio id="audio-correct" src="https://www.myinstants.com/media/sounds/ding-sound-effect_1.mp3"></audio>
+<audio id="audio-wrong" src="https://www.myinstants.com/media/sounds/wrong-answer-sound-effect.mp3"></audio>
+<audio id="audio-applause" src="https://www.myinstants.com/media/sounds/cheering-sound-effect.mp3"></audio>
+
+<script type="module">
+    import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js";
+
+    let currentLvl = 0;
+    let canAct = false;
+    let faceLandmarker;
+    let video = document.getElementById('webcam');
+
+    // Senarai 10 soalan termasuk 'roti'
+    const gameItems = [
+        { word: 'buku', img: '📚', wrong: '✏️' },
+        { word: 'roti', img: '🍞', wrong: '🍎' },
+        { word: 'roda', img: '🛞', wrong: '🪑' },
+        { word: 'raga', img: '🧺', wrong: '📦' },
+        { word: 'kaca', img: '🔍', wrong: '🪵' },
+        { word: 'lada', img: '🌶️', wrong: '🥕' },
+        { word: 'bata', img: '🧱', wrong: '🥨' },
+        { word: 'pasu', img: '🪴', wrong: '🥣' },
+        { word: 'sudu', img: '🥄', wrong: '🍴' },
+        { word: 'bola', img: '⚽', wrong: '🎾' }
+    ];
+
+    window.startGame = async function() {
+        if (faceLandmarker) return;
+        document.getElementById('start-screen').style.display = 'none';
+        document.getElementById('game-overlay').style.display = 'flex';
+        
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm");
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
+            runningMode: "VIDEO", numFaces: 1
+        });
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.onloadeddata = () => { loadLevel(); canAct = true; loop(); };
+    }
+
+    function loadLevel() {
+        if (currentLvl >= gameItems.length) {
+            document.getElementById('success-page').style.display = 'flex';
+            document.getElementById('audio-applause').play(); // Audio sorakan baru
+            canAct = false;
+            return;
+        }
+        
+        const item = gameItems[currentLvl];
+        document.getElementById('current-word').innerText = item.word.toUpperCase();
+        
+        const isLeft = Math.random() > 0.5;
+        const L = document.getElementById('left-card');
+        const R = document.getElementById('right-card');
+
+        L.className = 'card'; R.className = 'card';
+        L.innerHTML = isLeft ? item.img : item.wrong;
+        R.innerHTML = !isLeft ? item.img : item.wrong;
+        L.dataset.correct = isLeft;
+        R.dataset.correct = !isLeft;
+
+        // Sebutan suara automatik
+        const speech = new SpeechSynthesisUtterance(item.word);
+        speech.lang = 'ms-MY';
+        speech.rate = 0.8;
+        window.speechSynthesis.speak(speech);
+    }
+
+    function loop() {
+        if (faceLandmarker && canAct) {
+            const results = faceLandmarker.detectForVideo(video, performance.now());
+            if (results.faceLandmarks && results.faceLandmarks[0]) {
+                const tilt = results.faceLandmarks[0][234].y - results.faceLandmarks[0][454].y;
+                if (tilt < -0.08) { document.body.className = 'active-left'; check('left'); }
+                else if (tilt > 0.08) { document.body.className = 'active-right'; check('right'); }
+                else { document.body.className = ''; }
+            }
+        }
+        requestAnimationFrame(loop);
+    }
+
+    function check(side) {
+        canAct = false;
+        const card = document.getElementById(side + '-card');
+        const isCorrect = card.dataset.correct === "true";
+
+        if (isCorrect) {
+            card.classList.add('correct-glow');
+            document.getElementById('audio-correct').play(); // Bunyi Ding
+            currentLvl++;
+            setTimeout(() => { loadLevel(); canAct = true; }, 2000);
+        } else {
+            card.classList.add('wrong-glow'); // Kotak jadi merah
+            document.getElementById('audio-wrong').play();
+            setTimeout(() => { card.classList.remove('wrong-glow'); canAct = true; }, 1500);
+        }
+    }
+</script>
+</body>
+</html>
